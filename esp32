@@ -1,0 +1,130 @@
+#include <Arduino.h>
+#include <Wire.h>
+
+#define D0      10
+#define D1      9
+#define D2      18
+#define D3      7
+
+#define PCLK    4
+#define HREF    19
+#define VSYNC   6
+
+#define SDA 2
+#define SCL 3
+
+/////
+#define XCLK 8
+#define ESP_TX  1
+#define ESP_RX  3
+
+//////待定引脚
+
+#define FRAME_W 320
+#define FRAME_H 240
+
+uint8_t frame[FRAME_W * FRAME_H];
+uint8_t background[FRAME_W * FRAME_H];
+
+
+#define MIN_AREA 500
+#define CHANGE_RATE 5
+int frame_cnt = 0;
+
+const char F = 'F';
+const char B = 'B';
+const char L = 'L';
+const char R = 'R';
+const char S = 'S';
+//图像参数
+
+void writeOV7670(byte addr, byte data) {
+  Wire.beginTransmission(0x21);
+  Wire.write(addr);
+  Wire.write(data);
+  Wire.endTransmission();
+}
+bool readOV7670() {
+  volatile int w = 0, h = 0;
+  while (digitalRead(VSYNC) == LOW);
+  while (digitalRead(VSYNC) == HIGH);
+  for (h = 0; h < FRAME_H; h++) {
+    w = 0;
+    while (digitalRead(HREF) == LOW);
+    while (digitalRead(HREF) == HIGH) {
+      while (digitalRead(PCLK) == LOW);
+      uint8_t high = 
+        (digitalRead(D3) << 3) |
+        (digitalRead(D2) << 2) |
+        (digitalRead(D1) << 1) |
+        digitalRead(D0);
+      while (digitalRead(PCLK) == HIGH);
+      while (digitalRead(PCLK) == LOW);
+      uint8_t low = 
+        (digitalRead(D3) << 3) |
+        (digitalRead(D2) << 2) |
+        (digitalRead(D1) << 1) |
+        digitalRead(D0);
+      while (digitalRead(PCLK) == HIGH);
+      frame[h * FRAME_W + w] = (high << 4) | low;
+      w++;
+    }
+  }
+  return true;
+}
+void setup() {
+   Serial.begin(115200);
+  Wire.begin(SDA,SCL);
+  pinMode(D0, INPUT);
+  pinMode(D1, INPUT);
+  pinMode(D2, INPUT);
+  pinMode(D3, INPUT);
+  pinMode(PCLK, INPUT);
+  pinMode(HREF, INPUT);
+  pinMode(VSYNC, INPUT);
+pinMode(XCLK, INPUT);
+   // 设置摄像头引脚为输入
+  writeOV7670(0x2C, 0x04); 
+  writeOV7670(0x12, 0x00);
+   // 4位模式
+readOV7670();
+  memcpy(background, frame, FRAME_W * FRAME_H);
+ 
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+readOV7670();
+
+  int sum_x = 0, sum_y = 0, cnt = 0;
+
+  // 背景差分
+  for (int i = 0; i < FRAME_W * FRAME_H; i++) {
+    int d = abs(frame[i] - background[i]);
+    if (d > 30) {  // 真8位，阈值不变
+      sum_x += i % FRAME_W;
+      sum_y += i / FRAME_W;
+      cnt++;
+    }
+  }
+
+  // 决策运动方向
+  char cmd = S;
+  if (cnt > MIN_AREA) {
+    int x = sum_x / cnt;
+    if (x < FRAME_W/3)          cmd = L;
+    else if (x > FRAME_W*2/3)   cmd = R;
+    else if (cnt < 5000)         cmd = F;
+    else if (cnt > 15000)        cmd = B;
+  }
+  Serial.write(cmd);
+ 
+  // 背景缓慢更新
+  frame_cnt++;
+  if (frame_cnt % CHANGE_RATE == 0) {
+    for (int i = 0; i < FRAME_W*FRAME_H; i++) {
+      background[i] = (background[i] * 7 + frame[i]) / 8;
+    }
+  }
+  delay(50);
+}
