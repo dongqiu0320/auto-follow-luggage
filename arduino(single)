@@ -1,0 +1,258 @@
+#define ACC_THRESHOLD 1.2  // 加速度超过1.2g判定为移动
+#define GYRO_THRESHOLD 5   // 角速度超过5°/s判定为移动
+#define ALARM_COOLDOWN 5000//报警
+bool isAlarmed = false;
+unsigned long lastAlarmTime = 0;
+
+int IN1=4;
+int IN2=5;
+int ENA=10;
+int IN3=6;
+int IN4=7;
+int ENB=11;//L298N驱动芯片引脚,A左B右
+
+#include <SoftwareSerial.h>
+int TX=8;
+int RX=9;
+SoftwareSerial BT(8, 9);
+char cmd;
+//HC-08蓝牙引脚
+
+int ETL=2;//左超声波
+int ETR=3;//右超声波
+
+int LED=A1;
+int BZ=13;//报警
+
+#include <MPU6050_tockn.h>
+#include <Wire.h>
+MPU6050 mpu6050(Wire);
+#define SDA A4;
+#define  SCL A5;
+int INTM=12;//MPU-6050六轴姿态传感器模块  
+
+int lefttime=0;
+int righttime=0;
+int rightduring=0;
+int leftduring=0;
+float leftdistance=0;
+float rightdistance=0;//超声波相关参数
+
+
+int speed=0;
+int leftspeed=0;
+int rightspeed=0;
+int maxspeed=100; 
+int minspeed=30; //电机相关参数
+void Left_Trigger()
+{ pinMode(ETL,OUTPUT);
+  digitalWrite(ETL,HIGH);
+  delayMicroseconds(10);
+  pinMode(ETL,INPUT);
+}
+void Right_Trigger()
+{ pinMode(ETR,OUTPUT);
+  digitalWrite(ETR,HIGH);
+  delayMicroseconds(10);
+  pinMode(ETR,INPUT);
+}
+void Leftread()
+{leftduring=micros()-lefttime;
+  if(digitalRead(ETL)==HIGH)
+  {lefttime=micros();
+  }
+  leftdistance=0.017*leftduring;
+}
+void Rightread()
+{rightduring=micros()-righttime;
+if(digitalRead(ETR)==HIGH)
+  {righttime=micros();
+  }
+  rightdistance=0.017*rightduring;
+}//超声波测距读取
+
+void MoveForward()
+{
+ digitalWrite(IN1,HIGH);
+digitalWrite(IN2,LOW);
+digitalWrite(IN3,HIGH);
+digitalWrite(IN4,LOW);
+analogWrite(ENA, leftspeed);
+analogWrite(ENB, rightspeed);
+}
+void MoveLeft()
+{
+ digitalWrite(IN1,HIGH);
+digitalWrite(IN2,LOW);
+digitalWrite(IN3,HIGH);
+digitalWrite(IN4,LOW);
+analogWrite(ENA,leftspeed);
+analogWrite(ENB,rightspeed);
+}
+void MoveRight()
+{
+ digitalWrite(IN1,HIGH);
+digitalWrite(IN2,LOW);
+digitalWrite(IN3,HIGH);
+digitalWrite(IN4,LOW);
+analogWrite(ENA,leftspeed);
+analogWrite(ENB,rightspeed);
+}
+void MoveBack()
+{
+ digitalWrite(IN2,HIGH);
+digitalWrite(IN1,LOW);
+digitalWrite(IN4,HIGH);
+digitalWrite(IN3,LOW);
+analogWrite(ENA,leftspeed);
+analogWrite(ENB,rightspeed);
+}
+void MoveStop()
+{
+ digitalWrite(IN1,HIGH);
+digitalWrite(IN2,LOW);
+digitalWrite(IN3,HIGH);
+digitalWrite(IN4,LOW);
+analogWrite(ENA,0);
+analogWrite(ENB,0);
+}
+
+void Motorcontrol()
+{leftspeed=maxspeed;
+  rightspeed=maxspeed;
+  if(cmd==1)
+{if(leftdistance>100&&rightdistance>100)
+  {
+    MoveForward();
+  }
+   if(leftdistance<50&&rightdistance<50)
+  {MoveStop();
+   }
+   if(leftdistance>100&&rightdistance<80)
+{
+MoveRight();
+delay(1000);
+MoveForward();
+delay(1000);
+}
+if(rightdistance>100&&leftdistance<80)
+{
+MoveLeft();
+delay(1000);
+MoveForward();
+delay(1000);
+}
+}
+else if(cmd==2)
+{
+MoveStop();
+ Alert();
+ sendAlarm();
+}
+else if(cmd==3)
+{ MoveForward();}
+ else if(cmd==4)
+ {MoveRight();}
+else if(cmd==5)
+{MoveLeft();}
+else if(cmd==6)
+{MoveBack();}
+else if(cmd==7)
+{MoveStop();}
+else if(cmd==8)
+{if(leftdistance>100&&rightdistance>100)
+  {
+    MoveForward();
+  }
+   if(leftdistance<50&&rightdistance<50)
+  {MoveStop();
+  delay(1000);
+  MoveRight();
+  delay(1000);
+   }
+   if(leftdistance>100&&rightdistance<80)
+{
+MoveLeft();
+delay(1000);
+MoveForward();
+delay(1000);
+}
+if(rightdistance>100&&leftdistance<80)
+{MoveRight();
+delay(1000);
+MoveForward();
+delay(1000);
+} 
+}
+}//电机驱动
+
+void Alert()
+{float accX = mpu6050.getAccX();
+  float accY = mpu6050.getAccY();
+  float accZ = mpu6050.getAccZ();
+  float gyroX = mpu6050.getGyroX();
+  float gyroY = mpu6050.getGyroY();
+  float gyroZ = mpu6050.getGyroZ();
+ float totalAcc = sqrt(accX*accX + accY*accY + accZ*accZ);
+  // 计算合角速度（判断是否被转动/倾斜）
+  float totalGyro = abs(gyroX) + abs(gyroY) + abs(gyroZ);
+Serial.println("totalAcc");
+Serial.println(totalAcc);
+Serial.println("totalGyro");
+Serial.println(totalGyro);
+  // 判断是否触发报警
+  bool isMoving = (totalAcc > ACC_THRESHOLD) || (totalGyro > GYRO_THRESHOLD);
+  if (isMoving && !isAlarmed && (millis() - lastAlarmTime > ALARM_COOLDOWN)) 
+  {
+    // 触发报警
+    sendAlarm();
+    isAlarmed = true;
+    lastAlarmTime = millis();
+  }
+   else if (!isMoving)
+    {
+    // 回到静止状态，重置报警标记
+    isAlarmed = false;
+  }
+}
+void sendAlarm() {
+  // 1. 蓝牙发送报警指令到手机
+  BT.println("ALARM: 行李箱被移动！");
+  // 2. 蜂鸣器报警（如果外接了蜂鸣器）
+   for(int i=0;i<40;i++)
+   {pinMode(BZ,OUTPUT);
+   pinMode(LED,OUTPUT);
+    digitalWrite(BZ, HIGH);
+   digitalWrite(LED, HIGH);
+   delay(1000);
+   digitalWrite(BZ, LOW);
+ digitalWrite(LED, LOW);
+   }
+}
+
+void setup() {
+  BT.begin(9600);
+  Serial.begin(9600);//软串口通信
+   
+  Wire.begin();
+  mpu6050.begin();
+  mpu6050.calcGyroOffsets(true);//MPU-6050六轴姿态传感器模块  
+ pinMode(IN1,OUTPUT);
+pinMode(IN2,OUTPUT);
+pinMode(IN3,OUTPUT);
+pinMode(IN4,OUTPUT);
+pinMode(ENA,OUTPUT);
+pinMode(ENB,OUTPUT);//电机引脚模式设置
+attachInterrupt(0, Leftread,CHANGE);
+attachInterrupt(1, Rightread,CHANGE);//超声波接收
+}
+
+void loop() {
+  if (BT.available() > 0) {
+    cmd = BT.read();
+    Serial.print("收到蓝牙指令：");
+    Serial.println(cmd);
+  }//软串口通信
+mpu6050.update();
+ Motorcontrol();
+}
