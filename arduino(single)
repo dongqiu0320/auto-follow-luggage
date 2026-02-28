@@ -1,14 +1,13 @@
-#define ACC_THRESHOLD 1.2  // 加速度超过1.2g判定为移动
-#define GYRO_THRESHOLD 5   // 角速度超过5°/s判定为移动
 #define ALARM_COOLDOWN 5000//报警
-bool isAlarmed = false;
+bool Alarmed = false;
+bool Moving = false;
 unsigned long lastAlarmTime = 0;
 
-int IN1=4;
-int IN2=5;
+int IN1=7;
+int IN2=6;
 int ENA=10;
-int IN3=6;
-int IN4=7;
+int IN3=5;
+int IN4=4;
 int ENB=11;//L298N驱动芯片引脚,A左B右
 
 #include <SoftwareSerial.h>
@@ -20,8 +19,11 @@ char cmd;
 
 int ETL=2;//左超声波
 int ETR=3;//右超声波
+bool right=true;
+bool left=false;
+int detection_time=0;
 
-int LED=A1;
+int LED=A2;
 int BZ=13;//报警
 
 #include <MPU6050_tockn.h>
@@ -44,112 +46,112 @@ int leftspeed=0;
 int rightspeed=0;
 int maxspeed=100; 
 int minspeed=30; //电机相关参数
-void Left_Trigger()
-{ pinMode(ETL,OUTPUT);
-  digitalWrite(ETL,HIGH);
+void Right()
+{
+ pinMode(3, OUTPUT);
+  pinMode(2, INPUT);
+  digitalWrite(3, LOW);
+  delayMicroseconds(2);
+  digitalWrite(3, HIGH);
   delayMicroseconds(10);
-  pinMode(ETL,INPUT);
+  digitalWrite(3, LOW);
+   long t = pulseIn(2, HIGH);
+   if(t<82352)
+    {rightdistance = t * 0.017;
+   detection_time=millis();
+    }
+right=false;
+left=true;
 }
-void Right_Trigger()
-{ pinMode(ETR,OUTPUT);
-  digitalWrite(ETR,HIGH);
+void Left()
+{
+ pinMode(2, OUTPUT);
+  pinMode(3, INPUT);
+  digitalWrite(2, LOW);
+  delayMicroseconds(2);
+  digitalWrite(2, HIGH);
   delayMicroseconds(10);
-  pinMode(ETR,INPUT);
+  digitalWrite(2, LOW);
+   long t = pulseIn(3, HIGH);
+   if(t<5882)
+   {leftdistance = t * 0.017;
+    detection_time=millis();}
+left=false;
+right=true;
 }
-void Leftread()
-{leftduring=micros()-lefttime;
-  if(digitalRead(ETL)==HIGH)
-  {lefttime=micros();
-  }
-  leftdistance=0.017*leftduring;
-}
-void Rightread()
-{rightduring=micros()-righttime;
-if(digitalRead(ETR)==HIGH)
-  {righttime=micros();
-  }
-  rightdistance=0.017*rightduring;
-}//超声波测距读取
 
 void MoveForward()
 {
- digitalWrite(IN1,HIGH);
-digitalWrite(IN2,LOW);
-digitalWrite(IN3,HIGH);
-digitalWrite(IN4,LOW);
-analogWrite(ENA, leftspeed);
-analogWrite(ENB, rightspeed);
+  digitalWrite(IN1,LOW);
+digitalWrite(IN2,HIGH);
+digitalWrite(IN3,LOW);
+digitalWrite(IN4,HIGH);
+analogWrite(ENA,255);
+analogWrite(ENB,255);
 }
 void MoveLeft()
 {
- digitalWrite(IN1,HIGH);
-digitalWrite(IN2,LOW);
-digitalWrite(IN3,HIGH);
-digitalWrite(IN4,LOW);
-analogWrite(ENA,leftspeed);
-analogWrite(ENB,rightspeed);
+ digitalWrite(IN1,LOW);
+digitalWrite(IN2,HIGH);
+digitalWrite(IN3,LOW);
+digitalWrite(IN4,HIGH);
+analogWrite(ENA,255);
+analogWrite(ENB,50);
 }
 void MoveRight()
 {
- digitalWrite(IN1,HIGH);
-digitalWrite(IN2,LOW);
-digitalWrite(IN3,HIGH);
-digitalWrite(IN4,LOW);
-analogWrite(ENA,leftspeed);
-analogWrite(ENB,rightspeed);
+ digitalWrite(IN1,LOW);
+digitalWrite(IN2,HIGH);
+digitalWrite(IN3,LOW);
+digitalWrite(IN4,HIGH);
+analogWrite(ENA,50);
+analogWrite(ENB,255);
 }
 void MoveBack()
 {
- digitalWrite(IN2,HIGH);
-digitalWrite(IN1,LOW);
-digitalWrite(IN4,HIGH);
-digitalWrite(IN3,LOW);
-analogWrite(ENA,leftspeed);
-analogWrite(ENB,rightspeed);
-}
-void MoveStop()
-{
- digitalWrite(IN1,HIGH);
+digitalWrite(IN1,HIGH);
 digitalWrite(IN2,LOW);
 digitalWrite(IN3,HIGH);
 digitalWrite(IN4,LOW);
+analogWrite(ENB,255);
+analogWrite(ENA,255);
+}
+void MoveStop()
+{
+ digitalWrite(IN1,LOW);
+digitalWrite(IN2,HIGH);
+digitalWrite(IN3,LOW);
+digitalWrite(IN4,HIGH);
 analogWrite(ENA,0);
 analogWrite(ENB,0);
 }
 
 void Motorcontrol()
-{leftspeed=maxspeed;
-  rightspeed=maxspeed;
-  if(cmd==1)
-{if(leftdistance>100&&rightdistance>100)
+{  if(cmd==1)
+{ 
+  if(leftdistance>20&&leftdistance>20)
   {
     MoveForward();
   }
-   if(leftdistance<50&&rightdistance<50)
-  {MoveStop();
-   }
-   if(leftdistance>100&&rightdistance<80)
+  if(leftdistance<20&&leftdistance<20)
+  {
+   MoveStop();
+  }
+   
+   if(leftdistance-rightdistance>10)
 {
 MoveRight();
-delay(1000);
-MoveForward();
-delay(1000);
+
 }
-if(rightdistance>100&&leftdistance<80)
+if(rightdistance-leftdistance>10)
 {
 MoveLeft();
-delay(1000);
-MoveForward();
-delay(1000);
+
 }
 }
-else if(cmd==2)
-{
-MoveStop();
- Alert();
- sendAlarm();
-}
-else if(cmd==3)
+ else if(cmd==2)
+{MoveStop();}
+  else if(cmd==3)
 { MoveForward();}
  else if(cmd==4)
  {MoveRight();}
@@ -157,34 +159,15 @@ else if(cmd==5)
 {MoveLeft();}
 else if(cmd==6)
 {MoveBack();}
-else if(cmd==7)
-{MoveStop();}
 else if(cmd==8)
-{if(leftdistance>100&&rightdistance>100)
-  {
-    MoveForward();
-  }
-   if(leftdistance<50&&rightdistance<50)
-  {MoveStop();
-  delay(1000);
-  MoveRight();
-  delay(1000);
-   }
-   if(leftdistance>100&&rightdistance<80)
 {
-MoveLeft();
-delay(1000);
-MoveForward();
-delay(1000);
+MoveStop();
+ Alert();
+ 
 }
-if(rightdistance>100&&leftdistance<80)
-{MoveRight();
-delay(1000);
-MoveForward();
-delay(1000);
-} 
+
 }
-}//电机驱动
+//电机驱动
 
 void Alert()
 {float accX = mpu6050.getAccX();
@@ -201,18 +184,27 @@ Serial.println(totalAcc);
 Serial.println("totalGyro");
 Serial.println(totalGyro);
   // 判断是否触发报警
-  bool isMoving = (totalAcc > ACC_THRESHOLD) || (totalGyro > GYRO_THRESHOLD);
-  if (isMoving && !isAlarmed && (millis() - lastAlarmTime > ALARM_COOLDOWN)) 
+   Serial.println("Moving");
+Serial.println(Moving);
+ Serial.println("Alarmed");
+Serial.println(Alarmed);
+  if(totalAcc > 1.2 || totalGyro > 5)
+  {Moving=true;
+ 
+  }
+  if (Moving && !Alarmed && (millis() - lastAlarmTime > ALARM_COOLDOWN)) 
   {
     // 触发报警
     sendAlarm();
-    isAlarmed = true;
+    Alarmed = true;
     lastAlarmTime = millis();
+    
+    Moving=false;
   }
-   else if (!isMoving)
+   else if (!Moving)
     {
     // 回到静止状态，重置报警标记
-    isAlarmed = false;
+    Alarmed = false;
   }
 }
 void sendAlarm() {
@@ -220,15 +212,25 @@ void sendAlarm() {
   BT.println("ALARM: 行李箱被移动！");
   // 2. 蜂鸣器报警（如果外接了蜂鸣器）
    for(int i=0;i<40;i++)
-   {pinMode(BZ,OUTPUT);
+   {
+   pinMode(BZ,OUTPUT);
    pinMode(LED,OUTPUT);
     digitalWrite(BZ, HIGH);
    digitalWrite(LED, HIGH);
-   delay(1000);
+   delay(100);
    digitalWrite(BZ, LOW);
  digitalWrite(LED, LOW);
+  delay(100);
    }
+
 }
+
+
+
+
+
+
+
 
 void setup() {
   BT.begin(9600);
@@ -237,22 +239,45 @@ void setup() {
   Wire.begin();
   mpu6050.begin();
   mpu6050.calcGyroOffsets(true);//MPU-6050六轴姿态传感器模块  
- pinMode(IN1,OUTPUT);
-pinMode(IN2,OUTPUT);
+ pinMode(4,OUTPUT);
+pinMode(5,OUTPUT);
 pinMode(IN3,OUTPUT);
 pinMode(IN4,OUTPUT);
 pinMode(ENA,OUTPUT);
 pinMode(ENB,OUTPUT);//电机引脚模式设置
-attachInterrupt(0, Leftread,CHANGE);
-attachInterrupt(1, Rightread,CHANGE);//超声波接收
+
 }
 
 void loop() {
-  if (BT.available() > 0) {
+   
+  // 打印结果
+ 
+  if(millis()-detection_time>100)
+  {if(right)
+  {Right();
+  
+  }
+  else if(left)
+  {Left();
+ 
+  }
+  }
+   Serial.print("右距离：");
+  Serial.print(rightdistance);
+  Serial.println(" cm");
+    Serial.print("左距离：");
+  Serial.print(leftdistance);
+  Serial.println(" cm");
+ 
+   if (BT.available() > 0) {
     cmd = BT.read();
     Serial.print("收到蓝牙指令：");
     Serial.println(cmd);
+
   }//软串口通信
+ 
 mpu6050.update();
  Motorcontrol();
 }
+  
+  
